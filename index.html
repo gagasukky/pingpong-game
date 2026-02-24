@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="description" content="ブラウザで遊べるクラシックなピンポンゲーム。PC・タブレット対応。" />
+  <title>PING PONG ⚡</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ===== メニュー画面 ===== -->
+  <div id="menu-screen" class="screen active">
+    <div class="menu-inner">
+      <div class="title-area">
+        <div class="title-glow">PING</div>
+        <div class="title-divider">⚡</div>
+        <div class="title-glow right">PONG</div>
+      </div>
+      <p class="subtitle">選択してゲームを開始</p>
+
+      <div class="mode-buttons">
+        <button id="btn-1p" class="btn-mode" onclick="startGame('1p')">
+          <span class="btn-icon">🤖</span>
+          <span class="btn-label">1P vs AI</span>
+          <span class="btn-sub">あなた vs コンピュータ</span>
+        </button>
+        <button id="btn-2p" class="btn-mode" onclick="startGame('2p')">
+          <span class="btn-icon">👥</span>
+          <span class="btn-label">2P 対戦</span>
+          <span class="btn-sub">同じ端末で2人対戦</span>
+        </button>
+      </div>
+
+      <!-- AI難易度（1Pのみ表示） -->
+      <div id="difficulty-area">
+        <p class="diff-label">AI 難易度</p>
+        <div class="diff-buttons">
+          <button class="btn-diff active" data-diff="easy" onclick="setDiff(this,'easy')">EASY</button>
+          <button class="btn-diff" data-diff="normal" onclick="setDiff(this,'normal')">NORMAL</button>
+          <button class="btn-diff" data-diff="hard" onclick="setDiff(this,'hard')">HARD</button>
+        </div>
+      </div>
+
+      <div class="controls-hint">
+        <div class="hint-block">
+          <span class="hint-icon">⌨️</span>
+          <span>PC: <strong>W/S</strong> または <strong>↑/↓</strong></span>
+        </div>
+        <div class="hint-block">
+          <span class="hint-icon">👆</span>
+          <span>タブレット: タッチ＆ドラッグ</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== ゲーム画面 ===== -->
+  <div id="game-screen" class="screen">
+    <div id="hud">
+      <div class="score-box left-score">
+        <div class="player-name" id="p1-name">PLAYER 1</div>
+        <div class="score-val" id="score-left">0</div>
+      </div>
+      <div class="hud-center">
+        <button id="btn-pause" onclick="togglePause()" title="一時停止">⏸</button>
+      </div>
+      <div class="score-box right-score">
+        <div class="player-name" id="p2-name">PLAYER 2</div>
+        <div class="score-val" id="score-right">0</div>
+      </div>
+    </div>
+
+    <div id="canvas-wrap">
+      <canvas id="game-canvas"></canvas>
+      <!-- カウントダウン表示 -->
+      <div id="countdown" class="overlay-text hidden"></div>
+    </div>
+
+    <div id="bottom-bar">
+      <button class="btn-small" onclick="goMenu()">🏠 メニュー</button>
+      <div id="win-goal-info">先に <strong>11点</strong> 取ったプレイヤーの勝利！</div>
+    </div>
+  </div>
+
+  <!-- ===== 勝利画面 ===== -->
+  <div id="result-screen" class="screen">
+    <div class="result-inner">
+      <div class="result-emoji" id="result-emoji">🏆</div>
+      <div class="result-title" id="result-title">PLAYER 1 WIN!</div>
+      <div class="result-score" id="result-score">11 - 7</div>
+      <div class="result-buttons">
+        <button class="btn-result" onclick="restartGame()">🔄 もう一度</button>
+        <button class="btn-result secondary" onclick="goMenu()">🏠 メニューへ</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
