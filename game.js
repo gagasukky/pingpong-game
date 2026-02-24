@@ -174,17 +174,24 @@ function startRound(serveDir) {
     let count = 3;
     const cd = document.getElementById('countdown');
 
-    cd.textContent = count;
-    cd.classList.remove('hidden');
+    // アニメーション付きで数字を表示するヘルパー
+    function showNum(n) {
+        cd.classList.remove('hidden', 'pop-anim');
+        cd.textContent = n;
+        void cd.offsetWidth; // 強制リフロー（アニメーションリセット）
+        cd.classList.add('pop-anim');
+    }
+
+    showNum(count); // 最初の「3」を表示
 
     const tick = setInterval(() => {
         count--;
         if (count > 0) {
-            // テキストを直接書き換えるだけでOK
-            cd.textContent = count;
+            showNum(count); // 「2」「1」を表示
         } else {
             clearInterval(tick);
             cd.classList.add('hidden');
+            cd.classList.remove('pop-anim');
             // ボール生成＆ゲーム開始
             ball = makeBall(serveDir);
             loop();
