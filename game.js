@@ -94,6 +94,10 @@ function resizeCanvas() {
 // メニュー操作
 // -----------------------------------------------
 function startGame(mode) {
+    if (window.initAudio) {
+        initAudio();
+        startPadBGM();
+    }
     gameMode = mode;
     // 2P選択時はAI難易度を隠す
     const diffArea = document.getElementById('difficulty-area');
@@ -111,6 +115,7 @@ function setDiff(el, diff) {
 }
 
 function goMenu() {
+    if (window.stopPadBGM) stopPadBGM();
     stopGame();
     showScreen('menu-screen');
     // 難易度エリアをリセット
@@ -217,17 +222,27 @@ function loop() {
 // 更新
 // -----------------------------------------------
 function update() {
-    if (!ball) return;
-
-    // --- パドル移動 ---
+    // パドルはゲームが動いていれば常に操作可能にする
     movePaddles();
+
+    if (!ball) {
+        // ボールがない（待機中）時に軌跡をフェードアウト
+        if (trail.length > 0) {
+            for (let t of trail) {
+                if (t.alpha === undefined) t.alpha = 1.0;
+                t.alpha -= 0.06;
+            }
+            trail = trail.filter(t => t.alpha > 0);
+        }
+        return;
+    }
 
     // --- ボール移動 ---
     ball.x += ball.vx;
     ball.y += ball.vy;
 
     // 軌跡
-    trail.push({ x: ball.x, y: ball.y });
+    trail.push({ x: ball.x, y: ball.y, alpha: 1.0 });
     if (trail.length > TRAIL_LEN) trail.shift();
 
     // 上下壁バウンド
@@ -235,11 +250,13 @@ function update() {
         ball.y = BALL_R;
         ball.vy = Math.abs(ball.vy);
         flashEdge('top');
+        if (window.playWallSE) playWallSE();
     }
     if (ball.y + BALL_R >= H) {
         ball.y = H - BALL_R;
         ball.vy = -Math.abs(ball.vy);
         flashEdge('bottom');
+        if (window.playWallSE) playWallSE();
     }
 
     // パドルとの衝突
@@ -353,6 +370,7 @@ function checkPaddleHit(p) {
 
         // ヒットフラッシュ
         triggerHitFlash(p);
+        if (window.playHitSE) playHitSE();
     }
 }
 
@@ -368,6 +386,7 @@ function scored(winner) {
     else scoreLeft++;
 
     updateScoreUI(winner);
+    if (window.playScoreSE) playScoreSE();
 
     if (scoreLeft >= WIN_SCORE || scoreRight >= WIN_SCORE) {
         // 試合終了
@@ -401,6 +420,8 @@ function flashScore(id) {
 // 勝利画面
 // -----------------------------------------------
 function showResult() {
+    if (window.stopPadBGM) stopPadBGM();
+    if (window.playWinSE) playWinSE();
     stopGame();
     const isP1Win = scoreLeft >= WIN_SCORE;
     const winName = isP1Win ? 'PLAYER 1' : (gameMode === '1p' ? 'AI' : 'PLAYER 2');
@@ -452,8 +473,9 @@ function drawTrail() {
     for (let i = 0; i < trail.length; i++) {
         const ratio = (i + 1) / trail.length;
         const size = BALL_R * ratio * 1.2;
+        const alpha = trail[i].alpha !== undefined ? trail[i].alpha : 1.0;
         ctx.save();
-        ctx.globalAlpha = ratio * 0.35;
+        ctx.globalAlpha = Math.max(0, ratio * 0.35 * alpha);
         ctx.beginPath();
         ctx.arc(trail[i].x, trail[i].y, size, 0, Math.PI * 2);
         ctx.fillStyle = '#00f5ff';
