@@ -170,29 +170,26 @@ function stopGame() {
 // -----------------------------------------------
 function startRound(serveDir) {
     ball = null;
+    trail = [];
     let count = 3;
     const cd = document.getElementById('countdown');
 
-    cd.classList.remove('hidden');
     cd.textContent = count;
+    cd.classList.remove('hidden');
 
     const tick = setInterval(() => {
         count--;
         if (count > 0) {
-            // アニメーション再起動のためクローンで差し替え
-            const clone = cd.cloneNode(true);
-            cd.parentNode.replaceChild(clone, cd.id ? clone : clone);
-            const cdEl = document.getElementById('countdown');
-            cdEl.textContent = count;
-            cdEl.classList.remove('hidden');
+            // テキストを直接書き換えるだけでOK
+            cd.textContent = count;
         } else {
             clearInterval(tick);
-            document.getElementById('countdown').classList.add('hidden');
-            // ボール生成＆ゲーム再開
+            cd.classList.add('hidden');
+            // ボール生成＆ゲーム開始
             ball = makeBall(serveDir);
             loop();
         }
-    }, 800);
+    }, 1000);
 }
 
 // -----------------------------------------------
