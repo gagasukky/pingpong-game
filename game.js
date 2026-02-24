@@ -172,14 +172,17 @@ function startRound(serveDir) {
     ball = null;
     trail = [];
     let count = 3;
-    const cd = document.getElementById('countdown');
 
-    // アニメーション付きで数字を表示するヘルパー
+    // 毎回新しく要素を作ることで確実にアニメーションをリセット・独立させる
     function showNum(n) {
-        cd.classList.remove('hidden', 'pop-anim');
+        const oldCd = document.getElementById('countdown-anim');
+        if (oldCd) oldCd.remove();
+
+        const cd = document.createElement('div');
+        cd.id = 'countdown-anim';
+        cd.className = 'countdown-text';
         cd.textContent = n;
-        void cd.offsetWidth; // 強制リフロー（アニメーションリセット）
-        cd.classList.add('pop-anim');
+        document.getElementById('canvas-wrap').appendChild(cd);
     }
 
     showNum(count); // 最初の「3」を表示
@@ -190,8 +193,9 @@ function startRound(serveDir) {
             showNum(count); // 「2」「1」を表示
         } else {
             clearInterval(tick);
-            cd.classList.add('hidden');
-            cd.classList.remove('pop-anim');
+            const finalCd = document.getElementById('countdown-anim');
+            if (finalCd) finalCd.remove();
+
             // ボール生成＆ゲーム開始
             ball = makeBall(serveDir);
             loop();
