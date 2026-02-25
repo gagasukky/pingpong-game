@@ -5,9 +5,17 @@
    ===================================================== */
 
 // =============== グローバル設定 ===============
-const WIN_SCORE = 11;
+let WIN_SCORE = 11;
+let deuceEnabled = true;
+
 const PADDLE_W = 14;
-const PADDLE_H_RATIO = 0.18;  // Canvasの高さに対する比率
+const PADDLE_TYPES = {
+    circle: { type: 'circle' },
+    normal: { type: 'rect', hRatio: 0.18 },
+    large: { type: 'rect', hRatio: 0.28 }
+};
+let currentPadType = PADDLE_TYPES.normal;
+
 const BALL_R = 9;
 const TRAIL_LEN = 8;
 
@@ -33,20 +41,32 @@ let ball, leftPaddle, rightPaddle, trail;
 let scoreLeft = 0, scoreRight = 0;
 
 // =============== 入力 ===============
+// キーボード入力時の画面スクロールを防ぎ、ゲームに集中させる（フォーカス改善）
+window.addEventListener('focus', () => { if (canvas) canvas.focus(); });
+document.addEventListener('click', () => { window.focus(); });
+
 const keys = {};
-window.addEventListener('keydown', e => { keys[e.key] = true; });
+window.addEventListener('keydown', e => {
+    keys[e.key] = true;
+    if (["ArrowUp", "ArrowDown", "w", "s", "W", "S", " "].includes(e.key)) {
+        e.preventDefault();
+    }
+}, { passive: false });
 window.addEventListener('keyup', e => { keys[e.key] = false; });
 
 // -----------------------------------------------
 // パドルオブジェクト生成
 // -----------------------------------------------
 function makePaddle(side) {
+    const isCircle = currentPadType.type === 'circle';
     return {
         side,
         x: side === 'left' ? PADDLE_W + 20 : W - PADDLE_W - 20,
         y: H / 2,
         w: PADDLE_W,
-        h: H * PADDLE_H_RATIO,
+        isCircle: isCircle,
+        h: isCircle ? PADDLE_W * 2 : H * currentPadType.hRatio,
+        r: isCircle ? PADDLE_W : undefined,
         speed: 0,
         // タッチ用
         touchY: null
@@ -58,14 +78,23 @@ function makePaddle(side) {
 // -----------------------------------------------
 function makeBall(serveDir = 1) {
     const angle = (Math.random() * 0.8 - 0.4); // ±0.4rad
-    const spd = W * 0.007;
+    const diffMultiplier = {
+        easy: 0.85,
+        normal: 1.0,
+        hard: 1.3
+    };
+    // 2Pモードの場合は常にnormalと同じ基準速度
+    const mult = gameMode === '2p' ? diffMultiplier.normal : (diffMultiplier[aiDiff] || 1.0);
+    const spd = W * 0.007 * mult;
+
     return {
         x: W / 2,
         y: H / 2,
         vx: Math.cos(angle) * spd * serveDir,
         vy: Math.sin(angle) * spd,
         baseSpeed: spd,
-        hitsCount: 0
+        hitsCount: 0,
+        isPowerShot: false
     };
 }
 
@@ -109,9 +138,30 @@ function startGame(mode) {
 }
 
 function setDiff(el, diff) {
-    document.querySelectorAll('.btn-diff').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#difficulty-area .btn-diff').forEach(b => b.classList.remove('active'));
     el.classList.add('active');
     aiDiff = diff;
+}
+
+// --- フェーズ2：UI設定用関数 ---
+function setPadSize(el, size) {
+    el.parentNode.querySelectorAll('.btn-diff').forEach(b => b.classList.remove('active'));
+    el.classList.add('active');
+    currentPadType = PADDLE_TYPES[size];
+}
+
+function setWinScore(el, score) {
+    el.parentNode.querySelectorAll('.btn-diff').forEach(b => b.classList.remove('active'));
+    el.classList.add('active');
+    WIN_SCORE = score;
+    const winGoalInfo = document.getElementById('win-goal-info');
+    if (winGoalInfo) winGoalInfo.innerHTML = `先に <strong>${WIN_SCORE}点</strong> 取ったプレイヤーの勝利！`;
+}
+
+function setDeuce(el, enabled) {
+    el.parentNode.querySelectorAll('.btn-diff').forEach(b => b.classList.remove('active'));
+    el.classList.add('active');
+    deuceEnabled = enabled;
 }
 
 function goMenu() {
@@ -123,6 +173,11 @@ function goMenu() {
 }
 
 function restartGame() {
+    if (window.initAudio) {
+        initAudio();
+        // ★【修正】リトライ時にもBGMを再開する
+        startPadBGM();
+    }
     showScreen('game-screen');
     initGame();
 }
@@ -156,10 +211,16 @@ function initGame() {
     leftPaddle = makePaddle('left');
     rightPaddle = makePaddle('right');
     trail = [];
+    powerItem = null; // アイテムリセット
 
     paused = false;
     gameRunning = true;
+    scoring = false; // ★【修正】リトライ時に得点フラグをリセットし弾が画面外にいっても進行不可にならないようにする
     document.getElementById('btn-pause').textContent = '⏸';
+
+    // ボールはない状態から開始するが、ループは回しておく（パドル操作と軌跡アニメーションのため）
+    ball = null;
+    loop();
 
     // 最初はカウントダウン後に開始
     startRound(1);
@@ -201,9 +262,8 @@ function startRound(serveDir) {
             const finalCd = document.getElementById('countdown-anim');
             if (finalCd) finalCd.remove();
 
-            // ボール生成＆ゲーム開始
+            // ボール生成してラウンド開始
             ball = makeBall(serveDir);
-            loop();
         }
     }, 1000);
 }
@@ -221,6 +281,8 @@ function loop() {
 // -----------------------------------------------
 // 更新
 // -----------------------------------------------
+let powerItem = null;
+
 function update() {
     // パドルはゲームが動いていれば常に操作可能にする
     movePaddles();
@@ -237,12 +299,25 @@ function update() {
         return;
     }
 
+    // --- パワーアイテム出現ロジック ---
+    if (!powerItem && ball.hitsCount > 2 && Math.random() < 0.002) {
+        const py = Math.max(100, Math.min(H - 100, ball.y + (Math.random() * 300 - 150)));
+        powerItem = {
+            x: W / 2 + (Math.random() * 100 - 50),
+            y: py,
+            baseY: py, // 漂うための基準位置
+            r: 25, // 大きくする
+            active: true,
+            pulse: 0
+        };
+    }
+
     // --- ボール移動 ---
     ball.x += ball.vx;
     ball.y += ball.vy;
 
     // 軌跡
-    trail.push({ x: ball.x, y: ball.y, alpha: 1.0 });
+    trail.push({ x: ball.x, y: ball.y, alpha: 1.0, isPowerShot: ball.isPowerShot });
     if (trail.length > TRAIL_LEN) trail.shift();
 
     // 上下壁バウンド
@@ -259,9 +334,25 @@ function update() {
         if (window.playWallSE) playWallSE();
     }
 
-    // パドルとの衝突
+    // パドルとの衝突（物理演算化）
     checkPaddleHit(leftPaddle);
     checkPaddleHit(rightPaddle);
+
+    // アイテムとの衝突判定
+    if (powerItem && powerItem.active) {
+        powerItem.pulse += 0.04; // アニメーション速度
+        powerItem.y = powerItem.baseY + Math.sin(powerItem.pulse) * 40; // 上下40pxにふわふわ漂う
+
+        const dx = ball.x - powerItem.x;
+        const dy = ball.y - powerItem.y;
+        if (Math.hypot(dx, dy) < BALL_R + powerItem.r) {
+            powerItem.active = false;
+            ball.isPowerShot = true;
+            ball.vx *= 1.6;
+            ball.vy *= 1.6;
+            if (window.playScoreSE) playScoreSE(); // 取得音
+        }
+    }
 
     // 得点判定
     if (ball.x - BALL_R < 0) {
@@ -332,43 +423,90 @@ function moveAI() {
 }
 
 // -----------------------------------------------
-// パドル衝突チェック
+// パドル衝突チェック（丸形・矩形対応、物理演算化）
 // -----------------------------------------------
 function checkPaddleHit(p) {
     if (!ball) return;
 
-    const bx = ball.x, by = ball.y;
-    const left = p.x - p.w / 2;
-    const right = p.x + p.w / 2;
-    const top = p.y - p.h / 2;
-    const bottom = p.y + p.h / 2;
+    let hit = false;
+    let normalX = 0;
+    let normalY = 0;
 
-    // バウンディングボックス判定
-    if (bx + BALL_R > left && bx - BALL_R < right &&
-        by + BALL_R > top && by - BALL_R < bottom) {
-
-        // 反射
-        if (p.side === 'left') {
-            ball.x = right + BALL_R;
-            ball.vx = Math.abs(ball.vx);
-        } else {
-            ball.x = left - BALL_R;
-            ball.vx = -Math.abs(ball.vx);
+    if (p.isCircle) {
+        // 円パドルとの衝突判定（円と円）
+        const dx = ball.x - p.x;
+        const dy = ball.y - p.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < BALL_R + p.r) {
+            hit = true;
+            if (dist !== 0) {
+                normalX = dx / dist;
+                normalY = dy / dist;
+            } else {
+                normalX = p.side === 'left' ? 1 : -1;
+            }
+            // 位置の押し出し
+            ball.x = p.x + normalX * (BALL_R + p.r);
+            ball.y = p.y + normalY * (BALL_R + p.r);
         }
+    } else {
+        // 矩形（両端R形状＝カプセル）との衝突判定
+        const top = p.y - p.h / 2 + p.w / 2;
+        const bottom = p.y + p.h / 2 - p.w / 2;
 
-        // パドルの当たり位置でvy調整（スピン効果）
-        const relY = (by - p.y) / (p.h / 2); // -1〜1
-        ball.vy = relY * ball.baseSpeed * 1.4;
+        let closestX = p.x;
+        let closestY = Math.max(top, Math.min(ball.y, bottom));
 
-        // ヒット毎に少し加速（最大2倍）
+        const dx = ball.x - closestX;
+        const dy = ball.y - closestY;
+        const dist = Math.hypot(dx, dy);
+        const rSum = BALL_R + p.w / 2; // R部分は幅の半分
+
+        if (dist < rSum) {
+            hit = true;
+            if (dist === 0) {
+                normalX = p.side === 'left' ? 1 : -1;
+            } else {
+                normalX = dx / dist;
+                normalY = dy / dist;
+            }
+            ball.x = closestX + normalX * rSum;
+            ball.y = closestY + normalY * rSum;
+        }
+    }
+
+    if (hit) {
+        // パワーショット解除（受けた側は元の速度ベースになる）
+        ball.isPowerShot = false;
+
+        // 反射ベクトル計算: V' = V - 2(V・N)N
+        const dot = ball.vx * normalX + ball.vy * normalY;
+        ball.vx = ball.vx - 2 * dot * normalX;
+        ball.vy = ball.vy - 2 * dot * normalY;
+
+        // 操作感向上のため、パドル中心からの絶対的距離スピン影響を少し足す
+        const relY = p.isCircle ? (ball.y - p.y) / p.r : (ball.y - p.y) / (p.h / 2);
+        ball.vy += relY * ball.baseSpeed * 0.4;
+
+        // 速度計算と再定義
         ball.hitsCount++;
         const accel = Math.min(1 + ball.hitsCount * 0.06, 2.0);
-        const spd = Math.hypot(ball.vx, ball.vy);
+        let spd = Math.hypot(ball.vx, ball.vy);
+        if (spd < 0.1) spd = 1; // 0割回避
         const newSpd = ball.baseSpeed * accel;
+
         ball.vx = (ball.vx / spd) * newSpd;
         ball.vy = (ball.vy / spd) * newSpd;
 
-        // ヒットフラッシュ
+        // X方向の速度が死なないように補正
+        if (Math.abs(ball.vx) < newSpd * 0.3) {
+            ball.vx = Math.sign(ball.vx || (p.side === 'left' ? 1 : -1)) * newSpd * 0.3;
+        }
+        // 裏側に行くのを防ぐ強制的進行方向補正
+        if (p.side === 'left' && ball.vx < 0) ball.vx *= -1;
+        if (p.side === 'right' && ball.vx > 0) ball.vx *= -1;
+
+        // ヒットフラッシュ演出
         triggerHitFlash(p);
         if (window.playHitSE) playHitSE();
     }
@@ -378,9 +516,8 @@ function checkPaddleHit(p) {
 // 得点
 // -----------------------------------------------
 function scored(winner) {
-    cancelAnimationFrame(animId);
-    animId = null;
-    gameRunning = false;  // ループを確実に停止
+    // 【修正】ここではループ（animId）を止めず、ボールをnullにするだけに留める。
+    // gameRunning = false もしない。これにより、ボールが消えた後もパドルが動き、軌跡がフェードアウトする。
 
     if (winner === 'right') scoreRight++;
     else scoreLeft++;
@@ -388,7 +525,20 @@ function scored(winner) {
     updateScoreUI(winner);
     if (window.playScoreSE) playScoreSE();
 
-    if (scoreLeft >= WIN_SCORE || scoreRight >= WIN_SCORE) {
+    // デュースを含む勝利判定
+    let isWin = false;
+    if (deuceEnabled && scoreLeft >= WIN_SCORE - 1 && scoreRight >= WIN_SCORE - 1) {
+        // デュース状態：2点差をつけるまで
+        if (Math.abs(scoreLeft - scoreRight) >= 2 && (scoreLeft >= WIN_SCORE || scoreRight >= WIN_SCORE)) {
+            isWin = true;
+        }
+    } else {
+        if (scoreLeft >= WIN_SCORE || scoreRight >= WIN_SCORE) {
+            isWin = true;
+        }
+    }
+
+    if (isWin) {
         // 試合終了
         setTimeout(() => showResult(), 800);
     } else {
@@ -420,9 +570,11 @@ function flashScore(id) {
 // 勝利画面
 // -----------------------------------------------
 function showResult() {
+    // ★【修正】BGM停止・ループ終了はリザルト表示時に行う。
     if (window.stopPadBGM) stopPadBGM();
     if (window.playWinSE) playWinSE();
     stopGame();
+
     const isP1Win = scoreLeft >= WIN_SCORE;
     const winName = isP1Win ? 'PLAYER 1' : (gameMode === '1p' ? 'AI' : 'PLAYER 2');
 
@@ -445,6 +597,11 @@ function render() {
 
     // 中央点線
     drawCenterLine();
+
+    // アイテム描画
+    if (powerItem && powerItem.active) {
+        drawPowerItem();
+    }
 
     // ボール軌跡
     drawTrail();
@@ -478,34 +635,51 @@ function drawTrail() {
         ctx.globalAlpha = Math.max(0, ratio * 0.35 * alpha);
         ctx.beginPath();
         ctx.arc(trail[i].x, trail[i].y, size, 0, Math.PI * 2);
-        ctx.fillStyle = '#00f5ff';
+
+        if (trail[i].isPowerShot) {
+            ctx.fillStyle = '#ffe600'; // パワーショット時の黄色い軌跡
+        } else {
+            ctx.fillStyle = '#00f5ff';
+        }
         ctx.fill();
         ctx.restore();
     }
 }
 
 function drawPaddle(p, color) {
-    const x = p.x - p.w / 2;
-    const y = p.y - p.h / 2;
-    const r = p.w / 2;  // 角丸半径
-
-    // グロー
     ctx.save();
     ctx.shadowColor = color;
     ctx.shadowBlur = 20;
 
-    // 本体（角丸矩形）
-    ctx.beginPath();
-    ctx.roundRect(x, y, p.w, p.h, r);
-    ctx.fillStyle = color;
-    ctx.fill();
+    if (p.isCircle) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
 
-    // ハイライト
-    const grad = ctx.createLinearGradient(x, y, x + p.w, y);
-    grad.addColorStop(0, 'rgba(255,255,255,0.4)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = grad;
-    ctx.fill();
+        const grad = ctx.createRadialGradient(p.x - p.r * 0.3, p.y - p.r * 0.3, p.r * 0.1, p.x, p.y, p.r);
+        grad.addColorStop(0, 'rgba(255,255,255,0.4)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+    } else {
+        const x = p.x - p.w / 2;
+        const y = p.y - p.h / 2;
+        const r = p.w / 2;  // 角丸半径
+
+        // 本体（角丸矩形）
+        ctx.beginPath();
+        ctx.roundRect(x, y, p.w, p.h, r);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        // ハイライト
+        const grad = ctx.createLinearGradient(x, y, x + p.w, y);
+        grad.addColorStop(0, 'rgba(255,255,255,0.4)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+    }
 
     ctx.restore();
 }
@@ -515,23 +689,55 @@ function drawBall() {
 
     // グロー
     ctx.save();
-    ctx.shadowColor = '#fff';
-    ctx.shadowBlur = 30;
+    if (ball.isPowerShot) {
+        // パワーショット時の激しい発光
+        const flicker = Math.random() > 0.5 ? 40 : 20;
+        ctx.shadowColor = '#ffe600';
+        ctx.shadowBlur = flicker;
+    } else {
+        ctx.shadowColor = '#fff';
+        ctx.shadowBlur = 30;
+    }
 
     // 本体
     ctx.beginPath();
     ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
 
-    const grad = ctx.createRadialGradient(
-        ball.x - BALL_R * 0.3, ball.y - BALL_R * 0.3, BALL_R * 0.1,
-        ball.x, ball.y, BALL_R
-    );
-    grad.addColorStop(0, '#ffffff');
-    grad.addColorStop(0.6, '#c0f8ff');
-    grad.addColorStop(1, '#00bcd4');
+    let grad;
+    if (ball.isPowerShot) {
+        grad = ctx.createRadialGradient(
+            ball.x - BALL_R * 0.3, ball.y - BALL_R * 0.3, BALL_R * 0.1,
+            ball.x, ball.y, BALL_R
+        );
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.5, '#ffffbb');
+        grad.addColorStop(1, '#ffbb00');
+    } else {
+        grad = ctx.createRadialGradient(
+            ball.x - BALL_R * 0.3, ball.y - BALL_R * 0.3, BALL_R * 0.1,
+            ball.x, ball.y, BALL_R
+        );
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.6, '#c0f8ff');
+        grad.addColorStop(1, '#00bcd4');
+    }
     ctx.fillStyle = grad;
     ctx.fill();
 
+    ctx.restore();
+}
+
+function drawPowerItem() {
+    ctx.save();
+    const animScale = 1 + Math.sin(powerItem.pulse) * 0.15;
+    ctx.shadowColor = '#ffe600';
+    ctx.shadowBlur = 20;
+    ctx.globalAlpha = 0.8 + Math.sin(powerItem.pulse * 2) * 0.2; // 明滅
+
+    ctx.beginPath();
+    ctx.arc(powerItem.x, powerItem.y, powerItem.r * animScale, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffe600';
+    ctx.fill();
     ctx.restore();
 }
 
@@ -616,11 +822,21 @@ window.addEventListener('resize', () => {
     const ratio = H / prevH;
     leftPaddle.y *= ratio;
     rightPaddle.y *= ratio;
-    leftPaddle.h = H * PADDLE_H_RATIO;
-    rightPaddle.h = H * PADDLE_H_RATIO;
+
+    if (leftPaddle.isCircle) {
+        leftPaddle.h = PADDLE_W * 2;
+        leftPaddle.r = PADDLE_W;
+        rightPaddle.h = PADDLE_W * 2;
+        rightPaddle.r = PADDLE_W;
+    } else {
+        leftPaddle.h = H * currentPadType.hRatio;
+        rightPaddle.h = H * currentPadType.hRatio;
+    }
+
     leftPaddle.x = PADDLE_W + 20;
     rightPaddle.x = W - PADDLE_W - 20;
     if (ball) { ball.y *= ratio; }
+    if (powerItem && powerItem.active) { powerItem.y *= ratio; }
 });
 
 // -----------------------------------------------

@@ -204,16 +204,22 @@ body::before {
   color: var(--subtext);
 }
 
-/* 難易度 */
-#difficulty-area {
+/* 設定エリア全般 */
+.settings-area {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.setting-group {
   width: 100%;
   text-align: center;
   transition: opacity 0.3s;
 }
 
 #difficulty-area.hidden {
-  opacity: 0.2;
-  pointer-events: none;
+  display: none !important;
 }
 
 .diff-label {

@@ -8,6 +8,16 @@ let actx = null;
 let masterGain = null;
 let bgmOscillators = [];
 let bgmGain = null;
+let bgmIntervalId = null; // コード展開用タイマー
+
+// 和音進行（Fmaj7 -> Cmaj7 -> Dm7 -> Am7）
+const chordProgression = [
+    [174.61, 220.00, 261.63, 329.63], // Fmaj7
+    [130.81, 164.81, 196.00, 246.94], // Cmaj7
+    [146.83, 174.61, 220.00, 261.63], // Dm7
+    [220.00, 261.63, 329.63, 392.00]  // Am7
+];
+let currentChordIdx = 0;
 
 // 音声初期化（ユーザーのジェスチャー後に呼ぶ）
 function initAudio() {
@@ -135,10 +145,11 @@ function startPadBGM() {
     const t = actx.currentTime;
     bgmGain.gain.linearRampToValueAtTime(0.25, t + 4.0); // 4秒かけてゆっくりフェードイン
 
-    // Fmaj9 / C みたいな浮遊感のある和音 (F, A, C, E, G)
-    const baseFreqs = [174.61, 220.00, 261.63, 329.63, 392.00];
+    // 最初のコードで開始
+    currentChordIdx = 0;
+    const baseFreqs = chordProgression[currentChordIdx];
 
-    baseFreqs.forEach(freq => {
+    baseFreqs.forEach((freq, baseIdx) => {
         // 左右に揺れる2つのオシレーターで厚みを出す
         for (let i = 0; i < 2; i++) {
             const osc = actx.createOscillator();
@@ -168,12 +179,31 @@ function startPadBGM() {
             osc.start();
             lfo.start();
 
-            bgmOscillators.push({ osc, lfo });
+            bgmOscillators.push({ osc, lfo, baseIdx, detune });
         }
     });
+
+    // 12秒ごとにコードをフワッと変更するシーケンス
+    bgmIntervalId = setInterval(() => {
+        currentChordIdx = (currentChordIdx + 1) % chordProgression.length;
+        const nextChord = chordProgression[currentChordIdx];
+        const now = actx.currentTime;
+
+        bgmOscillators.forEach(item => {
+            const targetFreq = nextChord[item.baseIdx] + item.detune;
+            item.osc.frequency.cancelScheduledValues(now);
+            item.osc.frequency.setValueAtTime(item.osc.frequency.value, now);
+            item.osc.frequency.exponentialRampToValueAtTime(targetFreq, now + 4.0); // 4秒かけてスライド
+        });
+    }, 12000);
 }
 
 function stopPadBGM() {
+    if (bgmIntervalId) {
+        clearInterval(bgmIntervalId);
+        bgmIntervalId = null;
+    }
+
     if (bgmGain) {
         const t = actx.currentTime;
         bgmGain.gain.cancelScheduledValues(t);

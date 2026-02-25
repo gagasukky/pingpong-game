@@ -39,12 +39,38 @@
       </div>
 
       <!-- AI難易度（1Pのみ表示） -->
-      <div id="difficulty-area">
+      <div id="difficulty-area" class="setting-group">
         <p class="diff-label">AI 難易度</p>
         <div class="diff-buttons">
           <button class="btn-diff active" data-diff="easy" onclick="setDiff(this,'easy')">EASY</button>
           <button class="btn-diff" data-diff="normal" onclick="setDiff(this,'normal')">NORMAL</button>
           <button class="btn-diff" data-diff="hard" onclick="setDiff(this,'hard')">HARD</button>
+        </div>
+      </div>
+
+      <div class="settings-area">
+        <div class="setting-group">
+          <p class="diff-label">バーのサイズ（形状）</p>
+          <div class="diff-buttons">
+            <button class="btn-diff" onclick="setPadSize(this,'circle')">〇</button>
+            <button class="btn-diff active" onclick="setPadSize(this,'normal')">中</button>
+            <button class="btn-diff" onclick="setPadSize(this,'large')">大</button>
+          </div>
+        </div>
+        <div class="setting-group">
+          <p class="diff-label">上がり得点</p>
+          <div class="diff-buttons">
+            <button class="btn-diff" onclick="setWinScore(this,5)">5</button>
+            <button class="btn-diff active" onclick="setWinScore(this,11)">11</button>
+            <button class="btn-diff" onclick="setWinScore(this,21)">21</button>
+          </div>
+        </div>
+        <div class="setting-group">
+          <p class="diff-label">デュース</p>
+          <div class="diff-buttons">
+            <button class="btn-diff active" onclick="setDeuce(this,true)">ON</button>
+            <button class="btn-diff" onclick="setDeuce(this,false)">OFF</button>
+          </div>
         </div>
       </div>
 
