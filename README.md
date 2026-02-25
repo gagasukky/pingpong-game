@@ -26,23 +26,6 @@
 
 ---
 
-## GitHub Pages への公開手順
-
-1. このリポジトリを GitHubで作成（例: `pingpong-game`）
-2. ファイルを `main` ブランチにプッシュ
-3. **Settings → Pages → Source: `main` → Save**
-4. 数分後に `https://ユーザー名.github.io/pingpong-game/` へアクセス
-
-## ローカルで動かす
-
-```bash
-# ファイルをブラウザで開くだけでOK
-open index.html   # macOS
-start index.html  # Windows
-```
-
----
-
 ## 技術スタック
 
 - HTML5 Canvas
