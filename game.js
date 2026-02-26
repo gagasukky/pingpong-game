@@ -39,6 +39,7 @@ let W, H; // canvasサイズ
 // =============== ゲームオブジェクト ===============
 let ball, leftPaddle, rightPaddle, trail;
 let scoreLeft = 0, scoreRight = 0;
+let nextObstacleHitsTarget = 10; // 次にお邪魔AIが出現する目標ヒット数
 
 // =============== 入力 ===============
 // キーボード入力時の画面スクロールを防ぎ、ゲームに集中させる（フォーカス改善）
@@ -216,6 +217,7 @@ function initGame() {
     trail = [];
     powerItem = null; // アイテムリセット
     obstacle = null;
+    nextObstacleHitsTarget = 10; // 初期化
 
     paused = false;
     gameRunning = true;
@@ -350,16 +352,17 @@ function update(dt) {
     }
 
     // --- お邪魔ひし形AI 出現＆動作ロジック ---
-    if (!obstacle && ball.hitsCount >= 10) {
+    if (!obstacle && ball.hitsCount >= nextObstacleHitsTarget) {
         obstacle = {
             active: true,
             x: W / 2,
             y: H / 2,
-            w: 24, // 幅
-            h: 140, // 高さ
+            w: Math.max(16, H * 0.05), // 幅（画面高さ依存）
+            h: Math.max(100, H * 0.25), // 高さ（画面高さ依存）
             speedY: H * 0.25, // 上下移動速度
             dir: 1,
-            flash: 0
+            flash: 0,
+            hp: 5 // 5回で破壊
         };
     }
 
@@ -401,7 +404,16 @@ function update(dt) {
                 ball.vy += (Math.random() - 0.5) * ball.baseSpeed * 0.5;
 
                 if (window.playHitSE) playHitSE();
-                obstacle.flash = 1.0;
+
+                obstacle.hp--;
+                if (obstacle.hp <= 0) {
+                    if (window.playGlassBreakSE) window.playGlassBreakSE(); // 破壊音
+                    obstacle = null; // 破壊
+                    nextObstacleHitsTarget = ball.hitsCount + 10; // 再出現のための目標ヒット数更新
+                } else {
+                    if (window.playGlassHitSE) window.playGlassHitSE(); // 当たったガラス音
+                    obstacle.flash = 1.0;
+                }
             }
         }
     }
@@ -834,9 +846,14 @@ function drawPowerItem() {
 function drawObstacle() {
     ctx.save();
     const flash = Math.max(0, obstacle.flash);
-    ctx.shadowColor = flash > 0 ? '#ffffff' : '#ff3300';
-    ctx.shadowBlur = flash > 0 ? 30 : 15;
-    ctx.fillStyle = flash > 0 ? '#ffaa00' : '#ff3300';
+
+    // アメジスト調（深く濃い紫、フラッシュ時：紫がかった白）
+    const normalColor = 'rgba(106, 13, 173, 0.85)'; // 濃い紫（DarkViolet系）
+    const flashColor = '#f3e5f5'; // 紫がかった白
+
+    ctx.shadowColor = flash > 0 ? flashColor : '#8a2be2'; // BlueViolet（青紫の光の拡散）
+    ctx.shadowBlur = flash > 0 ? 30 : 20;
+    ctx.fillStyle = flash > 0 ? flashColor : normalColor;
 
     ctx.beginPath();
     ctx.moveTo(obstacle.x, obstacle.y - obstacle.h / 2); // 上
@@ -853,7 +870,9 @@ function drawObstacle() {
     ctx.lineTo(obstacle.x, obstacle.y + obstacle.h / 2 - 10);
     ctx.lineTo(obstacle.x - obstacle.w / 2 + 4, obstacle.y);
     ctx.closePath();
-    ctx.fillStyle = flash > 0 ? '#ffffff' : '#ff3300'; // base highlight color
+
+    // ハイライトの色合いは薄い紫〜マゼンタ系
+    ctx.fillStyle = flash > 0 ? '#ffffff' : 'rgba(238, 130, 238, 0.5)'; // Violet
     ctx.fill();
 
     ctx.restore();

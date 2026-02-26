@@ -222,11 +222,91 @@ function stopPadBGM() {
     }
 }
 
+// -----------------------------------------------
+// 追加SE：ガラス・クリスタル系
+// -----------------------------------------------
+
+// 宝石（アメジスト）の衝突音（コォンッ または キンッ）
+function playGlassHitSE() {
+    if (!actx) return;
+    const t = actx.currentTime;
+
+    // 高音の硬いアタックに加え、少し低めの成分を足して重厚な共鳴感を出す
+    const freqs = [880, 1760, 2640];
+    freqs.forEach((freq, idx) => {
+        const osc = actx.createOscillator();
+        const gain = actx.createGain();
+
+        // 基音に硬さを持たせるため、1つ目をtriangleにする
+        osc.type = idx === 0 ? 'triangle' : 'sine';
+        // 瞬間的なピッチダウンで軽快なアタック感を出す
+        osc.frequency.setValueAtTime(freq * 1.05, t);
+        osc.frequency.exponentialRampToValueAtTime(freq, t + 0.08);
+
+        // 重みを持たせるため少し長めに余韻を残す
+        gain.gain.setValueAtTime(0.5 - (idx * 0.15), t);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.25 - (idx * 0.05));
+
+        osc.connect(gain);
+        gain.connect(masterGain);
+
+        osc.start(t);
+        osc.stop(t + 0.3);
+    });
+}
+
+// 宝石が砕ける音（硬質な破片が散る感覚）
+function playGlassBreakSE() {
+    if (!actx) return;
+    const t = actx.currentTime;
+
+    // 重厚な宝石が砕ける音（低めの成分と、硬質な破片の飛散表現）
+    for (let i = 0; i < 15; i++) {
+        const osc = actx.createOscillator();
+        const gain = actx.createGain();
+
+        // sine, triangleに加えてsquareも少し混ぜて硬質な破片感を出す
+        const randType = Math.random();
+        osc.type = randType > 0.6 ? 'sine' : (randType > 0.3 ? 'triangle' : 'square');
+
+        // 少し低めの周波数も含め、宝石の質量感を表現
+        const freq = 800 + Math.random() * 3500;
+        osc.frequency.setValueAtTime(freq, t);
+        // 少しピッチを急降下させて破片の重さを出す
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.8, t + 0.2);
+
+        const delay = Math.random() * 0.12; // 破片が散るような微妙な時間のズレ
+        const duration = 0.3 + Math.random() * 0.5; // 少し長めの余韻
+
+        gain.gain.setValueAtTime(0, t + delay); // delayまで0
+        gain.gain.linearRampToValueAtTime(0.2, t + delay + 0.01); // 一瞬でアタック
+        gain.gain.exponentialRampToValueAtTime(0.01, t + delay + duration); // 減衰
+
+        // パンニングでキラキラ感を広げる
+        const panner = actx.createStereoPanner();
+        panner.pan.value = (Math.random() - 0.5) * 1.8;
+
+        // square等高倍音を含む場合は少しフィルターをかける
+        const filter = actx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 6000;
+
+        osc.connect(gain);
+        gain.connect(filter);
+        filter.connect(panner);
+        panner.connect(masterGain);
+
+        osc.start(t);
+        osc.stop(t + delay + duration);
+    }
+}
+
 // 外部から呼べるようにwindowにエクスポート
 window.initAudio = initAudio;
 window.startPadBGM = startPadBGM;
 window.stopPadBGM = stopPadBGM;
 window.playHitSE = playHitSE;
 window.playWallSE = playWallSE;
-window.playScoreSE = playScoreSE;
 window.playWinSE = playWinSE;
+window.playGlassHitSE = playGlassHitSE;
+window.playGlassBreakSE = playGlassBreakSE;
