@@ -85,7 +85,7 @@ function makeBall(serveDir = 1) {
     };
     // 2Pモードの場合は常にnormalと同じ基準速度
     const mult = gameMode === '2p' ? diffMultiplier.normal : (diffMultiplier[aiDiff] || 1.0);
-    const spd = W * 0.007 * mult;
+    const spd = W * 0.42 * mult;
 
     return {
         x: W / 2,
@@ -186,7 +186,10 @@ function togglePause() {
     if (!gameRunning) return;
     paused = !paused;
     document.getElementById('btn-pause').textContent = paused ? '▶' : '⏸';
-    if (!paused) loop();
+    if (!paused) {
+        lastTime = performance.now();
+        animId = requestAnimationFrame(loop);
+    }
 }
 
 function showScreen(id) {
@@ -212,6 +215,7 @@ function initGame() {
     rightPaddle = makePaddle('right');
     trail = [];
     powerItem = null; // アイテムリセット
+    obstacle = null;
 
     paused = false;
     gameRunning = true;
@@ -220,7 +224,8 @@ function initGame() {
 
     // ボールはない状態から開始するが、ループは回しておく（パドル操作と軌跡アニメーションのため）
     ball = null;
-    loop();
+    lastTime = 0;
+    animId = requestAnimationFrame(loop);
 
     // 最初はカウントダウン後に開始
     startRound(1);
@@ -271,9 +276,17 @@ function startRound(serveDir) {
 // -----------------------------------------------
 // メインループ
 // -----------------------------------------------
-function loop() {
-    if (!gameRunning || paused) return;
-    update();
+let lastTime = 0;
+function loop(timestamp) {
+    if (!gameRunning || paused) {
+        lastTime = timestamp;
+        return;
+    }
+    if (!lastTime) lastTime = timestamp;
+    const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
+    lastTime = timestamp;
+
+    update(dt);
     render();
     animId = requestAnimationFrame(loop);
 }
@@ -282,39 +295,41 @@ function loop() {
 // 更新
 // -----------------------------------------------
 let powerItem = null;
+let obstacle = null;
 
-function update() {
+function update(dt) {
     // パドルはゲームが動いていれば常に操作可能にする
-    movePaddles();
+    movePaddles(dt);
 
     if (!ball) {
         // ボールがない（待機中）時に軌跡をフェードアウト
         if (trail.length > 0) {
             for (let t of trail) {
                 if (t.alpha === undefined) t.alpha = 1.0;
-                t.alpha -= 0.06;
+                t.alpha -= 3.6 * dt;
             }
             trail = trail.filter(t => t.alpha > 0);
         }
         return;
     }
 
-    // --- パワーアイテム出現ロジック ---
-    if (!powerItem && ball.hitsCount > 2 && Math.random() < 0.002) {
-        const py = Math.max(100, Math.min(H - 100, ball.y + (Math.random() * 300 - 150)));
+    // --- パワーアイテム出現ロジック（中央30％で浮遊） ---
+    if (!powerItem && ball.hitsCount >= 4 && Math.random() < 0.2 * dt) {
         powerItem = {
-            x: W / 2 + (Math.random() * 100 - 50),
-            y: py,
-            baseY: py, // 漂うための基準位置
-            r: 25, // 大きくする
+            x: W / 2,
+            y: H / 2,
+            baseX: W / 2,
+            baseY: H / 2,
+            r: 25,
             active: true,
-            pulse: 0
+            pulse: 0,
+            time: 0
         };
     }
 
     // --- ボール移動 ---
-    ball.x += ball.vx;
-    ball.y += ball.vy;
+    ball.x += ball.vx * dt;
+    ball.y += ball.vy * dt;
 
     // 軌跡
     trail.push({ x: ball.x, y: ball.y, alpha: 1.0, isPowerShot: ball.isPowerShot });
@@ -334,14 +349,78 @@ function update() {
         if (window.playWallSE) playWallSE();
     }
 
+    // --- お邪魔ひし形AI 出現＆動作ロジック ---
+    if (!obstacle && ball.hitsCount >= 10) {
+        obstacle = {
+            active: true,
+            x: W / 2,
+            y: H / 2,
+            w: 24, // 幅
+            h: 140, // 高さ
+            speedY: H * 0.25, // 上下移動速度
+            dir: 1,
+            flash: 0
+        };
+    }
+
+    if (obstacle && obstacle.active) {
+        obstacle.y += obstacle.speedY * obstacle.dir * dt;
+        if (obstacle.y - obstacle.h / 2 < 20) {
+            obstacle.y = obstacle.h / 2 + 20;
+            obstacle.dir = 1;
+        } else if (obstacle.y + obstacle.h / 2 > H - 20) {
+            obstacle.y = H - obstacle.h / 2 - 20;
+            obstacle.dir = -1;
+        }
+        if (obstacle.flash > 0) obstacle.flash -= 2 * dt;
+
+        // ボールとの当たり判定 (ひし形近似)
+        const hw = obstacle.w / 2;
+        const hh = obstacle.h / 2;
+        const dxAbs = Math.abs(ball.x - obstacle.x);
+        const dyAbs = Math.abs(ball.y - obstacle.y);
+
+        if (dxAbs / (hw + BALL_R) + dyAbs / (hh + BALL_R) <= 1.2) {
+            const signX = Math.sign(ball.x - obstacle.x) || 1;
+            const signY = Math.sign(ball.y - obstacle.y) || 1;
+            let nx = signX * hh;
+            let ny = signY * hw;
+            const len = Math.hypot(nx, ny);
+            nx /= len;
+            ny /= len;
+
+            const dot = ball.vx * nx + ball.vy * ny;
+            if (dot < 0) { // 向かっている場合のみ反射
+                ball.vx = ball.vx - 2 * dot * nx;
+                ball.vy = ball.vy - 2 * dot * ny;
+
+                // めり込み防止の押し出し
+                ball.x += nx * 6;
+                ball.y += ny * 6;
+                // イレギュラー要素として速度を少し変化
+                ball.vy += (Math.random() - 0.5) * ball.baseSpeed * 0.5;
+
+                if (window.playHitSE) playHitSE();
+                obstacle.flash = 1.0;
+            }
+        }
+    }
+
     // パドルとの衝突（物理演算化）
     checkPaddleHit(leftPaddle);
     checkPaddleHit(rightPaddle);
 
-    // アイテムとの衝突判定
+    // アイテム状態更新・衝突判定
     if (powerItem && powerItem.active) {
-        powerItem.pulse += 0.04; // アニメーション速度
-        powerItem.y = powerItem.baseY + Math.sin(powerItem.pulse) * 40; // 上下40pxにふわふわ漂う
+        if (powerItem.time === undefined) powerItem.time = 0;
+        powerItem.time += dt;
+        powerItem.pulse += 3.0 * dt; // スケール・明滅用
+
+        // ゆったり浮遊（中央30%エリアを大きく漂う）
+        const rangeX = W * 0.15;
+        const rangeY = H * 0.15;
+        powerItem.x = powerItem.baseX + Math.sin(powerItem.time * 0.8) * rangeX;
+        powerItem.y = powerItem.baseY + Math.cos(powerItem.time * 1.1) * rangeY;
 
         const dx = ball.x - powerItem.x;
         const dy = ball.y - powerItem.y;
@@ -366,13 +445,13 @@ function update() {
 // -----------------------------------------------
 // パドル移動
 // -----------------------------------------------
-function movePaddles() {
-    const paddleSpd = H * 0.012;
+function movePaddles(dt) {
+    const paddleSpd = H * 0.72 * dt;
 
     // --- 左パドル（Player1 / W・S / タッチ） ---
     if (leftPaddle.touchY !== null) {
         // タッチ操作
-        leftPaddle.y += (leftPaddle.touchY - leftPaddle.y) * 0.18;
+        leftPaddle.y += (leftPaddle.touchY - leftPaddle.y) * 10.8 * dt;
     } else {
         // キーボード
         if (keys['w'] || keys['W']) leftPaddle.y -= paddleSpd;
@@ -383,14 +462,14 @@ function movePaddles() {
     if (gameMode === '2p') {
         // 2P: 矢印キー / タッチ
         if (rightPaddle.touchY !== null) {
-            rightPaddle.y += (rightPaddle.touchY - rightPaddle.y) * 0.18;
+            rightPaddle.y += (rightPaddle.touchY - rightPaddle.y) * 10.8 * dt;
         } else {
             if (keys['ArrowUp']) rightPaddle.y -= paddleSpd;
             if (keys['ArrowDown']) rightPaddle.y += paddleSpd;
         }
     } else {
         // AI
-        moveAI();
+        moveAI(dt, rightPaddle, 'right');
     }
 
     // 画面内クランプ
@@ -407,19 +486,23 @@ function clampPaddle(p) {
 // -----------------------------------------------
 // AI移動
 // -----------------------------------------------
-function moveAI() {
+function moveAI(dt, paddle = rightPaddle, side = 'right') {
     if (!ball) return;
-    const factor = AI_SPEED[aiDiff] || 0.07;
-    // ボールが右へ向かうときのみ追跡（イージーはランダム要素追加）
+    const factor = (AI_SPEED[aiDiff] || 0.07) * 60 * dt;
+    // ボールが自陣へ向かうときのみ追跡（イージーはランダム要素追加）
     let targetY = H / 2;
-    if (ball.vx > 0) {
+
+    // 向かってくる方向判定
+    const isIncoming = (side === 'right' && ball.vx > 0) || (side === 'left' && ball.vx < 0);
+
+    if (isIncoming) {
         targetY = ball.y;
         if (aiDiff === 'easy') {
             // easy: ノイズを加えて不完全に
             targetY += (Math.random() - 0.5) * H * 0.25;
         }
     }
-    rightPaddle.y += (targetY - rightPaddle.y) * factor;
+    paddle.y += (targetY - paddle.y) * factor;
 }
 
 // -----------------------------------------------
@@ -490,7 +573,8 @@ function checkPaddleHit(p) {
 
         // 速度計算と再定義
         ball.hitsCount++;
-        const accel = Math.min(1 + ball.hitsCount * 0.06, 2.0);
+        // 加速感をアップ（回数×15%加算、最大3.0倍まで）
+        const accel = Math.min(1 + ball.hitsCount * 0.15, 3.0);
         let spd = Math.hypot(ball.vx, ball.vy);
         if (spd < 0.1) spd = 1; // 0割回避
         const newSpd = ball.baseSpeed * accel;
@@ -601,6 +685,11 @@ function render() {
     // アイテム描画
     if (powerItem && powerItem.active) {
         drawPowerItem();
+    }
+
+    // お邪魔ひし形描画
+    if (obstacle && obstacle.active) {
+        drawObstacle();
     }
 
     // ボール軌跡
@@ -729,15 +818,44 @@ function drawBall() {
 
 function drawPowerItem() {
     ctx.save();
-    const animScale = 1 + Math.sin(powerItem.pulse) * 0.15;
+    // 鼓動を大きく
+    const animScale = 1 + Math.sin(powerItem.pulse) * 0.25;
     ctx.shadowColor = '#ffe600';
-    ctx.shadowBlur = 20;
+    ctx.shadowBlur = 30;
     ctx.globalAlpha = 0.8 + Math.sin(powerItem.pulse * 2) * 0.2; // 明滅
 
     ctx.beginPath();
     ctx.arc(powerItem.x, powerItem.y, powerItem.r * animScale, 0, Math.PI * 2);
     ctx.fillStyle = '#ffe600';
     ctx.fill();
+    ctx.restore();
+}
+
+function drawObstacle() {
+    ctx.save();
+    const flash = Math.max(0, obstacle.flash);
+    ctx.shadowColor = flash > 0 ? '#ffffff' : '#ff3300';
+    ctx.shadowBlur = flash > 0 ? 30 : 15;
+    ctx.fillStyle = flash > 0 ? '#ffaa00' : '#ff3300';
+
+    ctx.beginPath();
+    ctx.moveTo(obstacle.x, obstacle.y - obstacle.h / 2); // 上
+    ctx.lineTo(obstacle.x + obstacle.w / 2, obstacle.y); // 右
+    ctx.lineTo(obstacle.x, obstacle.y + obstacle.h / 2); // 下
+    ctx.lineTo(obstacle.x - obstacle.w / 2, obstacle.y); // 左
+    ctx.closePath();
+    ctx.fill();
+
+    // 内側のハイライト
+    ctx.beginPath();
+    ctx.moveTo(obstacle.x, obstacle.y - obstacle.h / 2 + 10);
+    ctx.lineTo(obstacle.x + obstacle.w / 2 - 4, obstacle.y);
+    ctx.lineTo(obstacle.x, obstacle.y + obstacle.h / 2 - 10);
+    ctx.lineTo(obstacle.x - obstacle.w / 2 + 4, obstacle.y);
+    ctx.closePath();
+    ctx.fillStyle = flash > 0 ? '#ffffff' : '#ff3300'; // base highlight color
+    ctx.fill();
+
     ctx.restore();
 }
 
@@ -835,8 +953,18 @@ window.addEventListener('resize', () => {
 
     leftPaddle.x = PADDLE_W + 20;
     rightPaddle.x = W - PADDLE_W - 20;
-    if (ball) { ball.y *= ratio; }
-    if (powerItem && powerItem.active) { powerItem.y *= ratio; }
+    if (ball) {
+        ball.x *= ratio;
+        ball.y *= ratio;
+    }
+    if (powerItem && powerItem.active) {
+        powerItem.baseX = W / 2;
+        powerItem.baseY = H / 2;
+    }
+    if (obstacle && obstacle.active) {
+        obstacle.x = W / 2;
+        obstacle.y *= ratio;
+    }
 });
 
 // -----------------------------------------------
