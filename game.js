@@ -39,7 +39,7 @@ let W, H; // canvasサイズ
 // =============== ゲームオブジェクト ===============
 let ball, leftPaddle, rightPaddle, trail;
 let scoreLeft = 0, scoreRight = 0;
-let nextObstacleHitsTarget = 10; // 次にお邪魔AIが出現する目標ヒット数
+let nextObstacleHitsTarget = 15; // 次にお邪魔AIが出現する目標ヒット数
 
 // =============== 入力 ===============
 // キーボード入力時の画面スクロールを防ぎ、ゲームに集中させる（フォーカス改善）
@@ -217,7 +217,7 @@ function initGame() {
     trail = [];
     powerItem = null; // アイテムリセット
     obstacle = null;
-    nextObstacleHitsTarget = 10; // 初期化
+    nextObstacleHitsTarget = 15; // 初期化
 
     paused = false;
     gameRunning = true;
@@ -316,7 +316,8 @@ function update(dt) {
     }
 
     // --- パワーアイテム出現ロジック（中央30％で浮遊） ---
-    if (!powerItem && ball.hitsCount >= 4 && Math.random() < 0.2 * dt) {
+    // 4ヒットごとに確実に出現
+    if (!powerItem && ball.hitsCount > 0 && ball.hitsCount % 4 === 0) {
         powerItem = {
             x: W / 2,
             y: H / 2,
@@ -341,12 +342,14 @@ function update(dt) {
     if (ball.y - BALL_R <= 0) {
         ball.y = BALL_R;
         ball.vy = Math.abs(ball.vy);
+        ball.hitsCount++; // 壁反射もヒットカウントに含める
         flashEdge('top');
         if (window.playWallSE) playWallSE();
     }
     if (ball.y + BALL_R >= H) {
         ball.y = H - BALL_R;
         ball.vy = -Math.abs(ball.vy);
+        ball.hitsCount++; // 壁反射もヒットカウントに含める
         flashEdge('bottom');
         if (window.playWallSE) playWallSE();
     }
@@ -409,7 +412,7 @@ function update(dt) {
                 if (obstacle.hp <= 0) {
                     if (window.playGlassBreakSE) window.playGlassBreakSE(); // 破壊音
                     obstacle = null; // 破壊
-                    nextObstacleHitsTarget = ball.hitsCount + 10; // 再出現のための目標ヒット数更新
+                    nextObstacleHitsTarget = ball.hitsCount + 15; // 再出現のための目標ヒット数更新
                 } else {
                     if (window.playGlassHitSE) window.playGlassHitSE(); // 当たったガラス音
                     obstacle.flash = 1.0;

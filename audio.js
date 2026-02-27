@@ -9,6 +9,7 @@ let masterGain = null;
 let bgmOscillators = [];
 let bgmGain = null;
 let bgmIntervalId = null; // コード展開用タイマー
+let bgmStopTimeout = null; // BGM停止タイマー
 
 // 和音進行（Fmaj7 -> Cmaj7 -> Dm7 -> Am7）
 const chordProgression = [
@@ -135,27 +136,60 @@ function startPadBGM() {
     if (!actx) initAudio();
     if (actx.state === 'suspended') actx.resume();
 
+    // 停止中タイマーがあればキャンセル（BGM再開のバグ対策）
+    if (bgmStopTimeout) {
+        clearTimeout(bgmStopTimeout);
+        bgmStopTimeout = null;
+        // 即座に古いものを破棄
+        bgmOscillators.forEach(layer => {
+            layer.gain.gain.cancelScheduledValues(actx.currentTime);
+            layer.osc.stop();
+            layer.lfo.stop();
+            layer.gain.disconnect();
+        });
+        bgmOscillators = [];
+    }
+
     // 既に再生中なら無視
-    if (bgmOscillators.length > 0) return;
+    if (bgmOscillators.length > 0 || bgmIntervalId) return;
 
-    bgmGain = actx.createGain();
-    bgmGain.gain.value = 0; // フェードイン用
-    bgmGain.connect(masterGain);
-
-    const t = actx.currentTime;
-    bgmGain.gain.linearRampToValueAtTime(0.25, t + 4.0); // 4秒かけてゆっくりフェードイン
-
-    // 最初のコードで開始
+    // 初回のコードで開始
     currentChordIdx = 0;
-    const baseFreqs = chordProgression[currentChordIdx];
+    playChordLayer(chordProgression[currentChordIdx], 4.0);
 
-    baseFreqs.forEach((freq, baseIdx) => {
+    // 12秒ごとにコードをフワッと変更するシーケンス（クロスフェード）
+    bgmIntervalId = setInterval(() => {
+        currentChordIdx = (currentChordIdx + 1) % chordProgression.length;
+        const nextChord = chordProgression[currentChordIdx];
+
+        // 古いオシレータ群をフェードアウト
+        const oldOscillators = bgmOscillators;
+        bgmOscillators = []; // 新しい群用にクリア
+
+        const now = actx.currentTime;
+        oldOscillators.forEach(layer => {
+            layer.gain.gain.cancelScheduledValues(now);
+            layer.gain.gain.setValueAtTime(layer.gain.gain.value, now);
+            layer.gain.gain.linearRampToValueAtTime(0, now + 4.0); // 4秒かけてフェードアウト
+            layer.osc.stop(now + 4.1);
+            layer.lfo.stop(now + 4.1);
+        });
+
+        // 新しいオシレータ群をフェードイン
+        playChordLayer(nextChord, 4.0);
+    }, 12000);
+}
+
+function playChordLayer(freqs, fadeDuration) {
+    const t = actx.currentTime;
+    freqs.forEach((freq) => {
         // 左右に揺れる2つのオシレーターで厚みを出す
         for (let i = 0; i < 2; i++) {
             const osc = actx.createOscillator();
             const panner = actx.createStereoPanner();
             const lfo = actx.createOscillator();
             const lfoGain = actx.createGain();
+            const layerGain = actx.createGain();
 
             // 少しだけデチューン（ピッチのズレ）を入れてコーラス効果を出す
             osc.type = 'sine';
@@ -171,31 +205,22 @@ function startPadBGM() {
             lfo.connect(lfoGain.gain);
             lfoGain.gain.value = 0.4; // 揺れる幅
 
+            // レイヤーごとのフェードイン用Gain
+            layerGain.gain.setValueAtTime(0, t);
+            layerGain.gain.linearRampToValueAtTime(0.25, t + fadeDuration);
+
             // 接続
             osc.connect(lfoGain);
             lfoGain.connect(panner);
-            panner.connect(bgmGain);
+            panner.connect(layerGain);
+            layerGain.connect(masterGain);
 
-            osc.start();
-            lfo.start();
+            osc.start(t);
+            lfo.start(t);
 
-            bgmOscillators.push({ osc, lfo, baseIdx, detune });
+            bgmOscillators.push({ osc, lfo, gain: layerGain });
         }
     });
-
-    // 12秒ごとにコードをフワッと変更するシーケンス
-    bgmIntervalId = setInterval(() => {
-        currentChordIdx = (currentChordIdx + 1) % chordProgression.length;
-        const nextChord = chordProgression[currentChordIdx];
-        const now = actx.currentTime;
-
-        bgmOscillators.forEach(item => {
-            const targetFreq = nextChord[item.baseIdx] + item.detune;
-            item.osc.frequency.cancelScheduledValues(now);
-            item.osc.frequency.setValueAtTime(item.osc.frequency.value, now);
-            item.osc.frequency.exponentialRampToValueAtTime(targetFreq, now + 4.0); // 4秒かけてスライド
-        });
-    }, 12000);
 }
 
 function stopPadBGM() {
@@ -204,21 +229,27 @@ function stopPadBGM() {
         bgmIntervalId = null;
     }
 
-    if (bgmGain) {
+    if (bgmOscillators.length > 0) {
         const t = actx.currentTime;
-        bgmGain.gain.cancelScheduledValues(t);
-        bgmGain.gain.setValueAtTime(bgmGain.gain.value, t);
-        bgmGain.gain.linearRampToValueAtTime(0, t + 2.0); // 2秒でフェードアウト
+        const fadeOutTime = 2.0;
 
-        setTimeout(() => {
-            bgmOscillators.forEach(nodes => {
-                nodes.osc.stop();
-                nodes.lfo.stop();
+        // 全ての現在アクティブなオシレータをフェードアウト
+        bgmOscillators.forEach(layer => {
+            layer.gain.gain.cancelScheduledValues(t);
+            layer.gain.gain.setValueAtTime(layer.gain.gain.value, t);
+            layer.gain.gain.linearRampToValueAtTime(0, t + fadeOutTime);
+        });
+
+        // 停止タイマーをセット
+        bgmStopTimeout = setTimeout(() => {
+            bgmOscillators.forEach(layer => {
+                layer.osc.stop();
+                layer.lfo.stop();
+                layer.gain.disconnect();
             });
             bgmOscillators = [];
-            bgmGain.disconnect();
-            bgmGain = null;
-        }, 2100);
+            bgmStopTimeout = null;
+        }, fadeOutTime * 1000 + 100);
     }
 }
 
@@ -226,77 +257,79 @@ function stopPadBGM() {
 // 追加SE：ガラス・クリスタル系
 // -----------------------------------------------
 
-// 宝石（アメジスト）の衝突音（コォンッ または キンッ）
+// 宝石（アメジスト）の衝突音（高く澄んだクリスタル音）
 function playGlassHitSE() {
     if (!actx) return;
     const t = actx.currentTime;
 
-    // 高音の硬いアタックに加え、少し低めの成分を足して重厚な共鳴感を出す
-    const freqs = [880, 1760, 2640];
+    // 2000Hz〜4000Hz帯のサイン波を組み合わせて高く澄んだ音を作る
+    const freqs = [2093.00, 2793.83, 3135.96, 4186.01]; // C7, F7, G7, C8 (透明感のある高音成分)
     freqs.forEach((freq, idx) => {
         const osc = actx.createOscillator();
         const gain = actx.createGain();
 
-        // 基音に硬さを持たせるため、1つ目をtriangleにする
-        osc.type = idx === 0 ? 'triangle' : 'sine';
-        // 瞬間的なピッチダウンで軽快なアタック感を出す
-        osc.frequency.setValueAtTime(freq * 1.05, t);
-        osc.frequency.exponentialRampToValueAtTime(freq, t + 0.08);
+        // 澄んだ音のため全てsine波にする
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t);
 
-        // 重みを持たせるため少し長めに余韻を残す
-        gain.gain.setValueAtTime(0.5 - (idx * 0.15), t);
-        gain.gain.exponentialRampToValueAtTime(0.01, t + 0.25 - (idx * 0.05));
+        // 高音域の美しい残響（アタックは速く、減衰は滑らかに）
+        const vol = 0.3 - (idx * 0.05);
+        gain.gain.setValueAtTime(0, t);
+        gain.gain.linearRampToValueAtTime(vol, t + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4 + (Math.random() * 0.2));
+
+        // パンニングで少しだけ広がりを持たせる
+        const panner = actx.createStereoPanner();
+        panner.pan.value = (Math.random() - 0.5) * 0.5;
 
         osc.connect(gain);
-        gain.connect(masterGain);
+        gain.connect(panner);
+        panner.connect(masterGain);
 
         osc.start(t);
-        osc.stop(t + 0.3);
+        osc.stop(t + 0.8);
     });
 }
 
-// 宝石が砕ける音（硬質な破片が散る感覚）
+// 宝石が砕ける音（キラキラしたパシャーン音）
 function playGlassBreakSE() {
     if (!actx) return;
     const t = actx.currentTime;
 
-    // 重厚な宝石が砕ける音（低めの成分と、硬質な破片の飛散表現）
-    for (let i = 0; i < 15; i++) {
+    // 破片が飛び散る高音域のキラキラした音
+    const numShards = 25; // 破片の数
+    for (let i = 0; i < numShards; i++) {
         const osc = actx.createOscillator();
         const gain = actx.createGain();
 
-        // sine, triangleに加えてsquareも少し混ぜて硬質な破片感を出す
-        const randType = Math.random();
-        osc.type = randType > 0.6 ? 'sine' : (randType > 0.3 ? 'triangle' : 'square');
+        // 澄んだ音をベースに、一部triangleを混ぜてガラス片の角（エッジ）を表現
+        osc.type = Math.random() > 0.8 ? 'triangle' : 'sine';
 
-        // 少し低めの周波数も含め、宝石の質量感を表現
-        const freq = 800 + Math.random() * 3500;
+        // 3000Hz〜7000Hzの高音域
+        const freq = 3000 + Math.random() * 4000;
         osc.frequency.setValueAtTime(freq, t);
-        // 少しピッチを急降下させて破片の重さを出す
-        osc.frequency.exponentialRampToValueAtTime(freq * 0.8, t + 0.2);
 
-        const delay = Math.random() * 0.12; // 破片が散るような微妙な時間のズレ
-        const duration = 0.3 + Math.random() * 0.5; // 少し長めの余韻
+        // 重力で少しだけピッチが落ちる表現（微細な変化）
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.95, t + 0.3);
 
-        gain.gain.setValueAtTime(0, t + delay); // delayまで0
-        gain.gain.linearRampToValueAtTime(0.2, t + delay + 0.01); // 一瞬でアタック
-        gain.gain.exponentialRampToValueAtTime(0.01, t + delay + duration); // 減衰
+        // 散らばる時間のズレ（最大0.2秒ほど）
+        const delay = Math.random() * 0.2;
+        // 短い減衰（チリンッ、という音の集まり）
+        const duration = 0.1 + Math.random() * 0.3;
 
-        // パンニングでキラキラ感を広げる
+        gain.gain.setValueAtTime(0, t + delay);
+        gain.gain.linearRampToValueAtTime(0.15, t + delay + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + delay + duration);
+
+        // 広大にパンニングしてキラキラ感を広げる
         const panner = actx.createStereoPanner();
-        panner.pan.value = (Math.random() - 0.5) * 1.8;
-
-        // square等高倍音を含む場合は少しフィルターをかける
-        const filter = actx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = 6000;
+        panner.pan.value = (Math.random() - 0.5) * 2.0;
 
         osc.connect(gain);
-        gain.connect(filter);
-        filter.connect(panner);
+        gain.connect(panner);
         panner.connect(masterGain);
 
-        osc.start(t);
+        osc.start(t + delay);
         osc.stop(t + delay + duration);
     }
 }
