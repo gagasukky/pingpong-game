@@ -868,54 +868,58 @@ function drawBall() {
 
 function drawPowerItem() {
     ctx.save();
-    // 鼓動を大きく
-    const animScale = 1 + Math.sin(powerItem.pulse) * 0.25;
+    // 鼓動（大きさの微妙な変化）
+    const animScale = 1 + Math.sin(powerItem.pulse) * 0.15;
+    const r = powerItem.r * animScale; // 基準サイズ
+    const rot = powerItem.pulse * 1.5; // 回転角
+
+    // 中心座標へ移動し、回転を適用
+    ctx.translate(powerItem.x, powerItem.y);
 
     if (powerItem.type === 'speed') {
-        // ★修正：時間経過（pulse）で色相環を回し、虹色の発光を作る
-        const hue = (powerItem.pulse * 50) % 360;
-        const color = `hsl(${hue}, 100%, 50%)`;
-
-        ctx.shadowColor = color;
+        // スピードアイテム（赤系のネオン発光する回転正方形）
+        ctx.rotate(rot); // 時計回り
+        ctx.shadowColor = '#ff1133'; // 強い赤（クリムゾン系）
         ctx.shadowBlur = 30;
-        ctx.globalAlpha = 0.8 + Math.sin(powerItem.pulse * 2) * 0.2; // 明滅
+        ctx.globalAlpha = 0.85 + Math.sin(powerItem.pulse * 2.5) * 0.15; // 明滅
 
+        // 塗りつぶしの正方形
         ctx.beginPath();
-        ctx.arc(powerItem.x, powerItem.y, powerItem.r * animScale, 0, Math.PI * 2);
+        ctx.rect(-r, -r, r * 2, r * 2);
 
-        // 虹色グラデーション
-        const grad = ctx.createRadialGradient(powerItem.x, powerItem.y, 0, powerItem.x, powerItem.y, powerItem.r * animScale);
-        grad.addColorStop(0, `hsl(${hue}, 100%, 75%)`); // 中心は白っぽく
-        grad.addColorStop(1, color);
+        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 1.5);
+        grad.addColorStop(0, '#ffffff'); // 中心は白飛び
+        grad.addColorStop(0.3, '#ff3355'); // 明るい赤
+        grad.addColorStop(1, '#aa0011');   // 暗い赤
         ctx.fillStyle = grad;
         ctx.fill();
 
-    } else if (powerItem.type === 'curve') {
-        // カーブアイテム（青〜紫系の発光色）
-        ctx.shadowColor = '#00e5ff'; // エメラルド・シアン系ベース
-        ctx.shadowBlur = 25;
-        ctx.globalAlpha = 0.8 + Math.sin(powerItem.pulse * 1.5) * 0.2;
+        // 枠線の強調（よりアイテムっぽく）
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#ffbbcc';
+        ctx.stroke();
 
-        // 背景円
+    } else if (powerItem.type === 'curve') {
+        // カーブアイテム（青系のネオン発光する回転正方形）
+        ctx.rotate(-rot); // 反時計回り
+        ctx.shadowColor = '#00e5ff'; // シアン・ディープブルー系
+        ctx.shadowBlur = 30;
+        ctx.globalAlpha = 0.85 + Math.sin(powerItem.pulse * 2.5) * 0.15;
+
+        // 塗りつぶしの正方形
         ctx.beginPath();
-        ctx.arc(powerItem.x, powerItem.y, powerItem.r * animScale, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(106, 13, 173, 0.6)'; // 深い紫をベースに
+        ctx.rect(-r, -r, r * 2, r * 2);
+
+        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 1.5);
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.3, '#00bfff'); // ディープスカイブルー
+        grad.addColorStop(1, '#00008b');   // ダークブルー
+        ctx.fillStyle = grad;
         ctx.fill();
 
-        // 渦巻き（カーブ感）のような意匠を描画
-        ctx.beginPath();
-        ctx.strokeStyle = '#00e5ff';
+        // 枠線の強調
         ctx.lineWidth = 3;
-        const spiralRot = powerItem.pulse * 2.0;
-
-        for (let i = 0; i < Math.PI * 4; i += 0.2) {
-            const rad = i * 2.5 * animScale;
-            // 渦を巻く
-            const sX = powerItem.x + Math.cos(i + spiralRot) * rad;
-            const sY = powerItem.y + Math.sin(i + spiralRot) * rad;
-            if (i === 0) ctx.moveTo(sX, sY);
-            else ctx.lineTo(sX, sY);
-        }
+        ctx.strokeStyle = '#bbfaff';
         ctx.stroke();
     }
 
