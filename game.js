@@ -39,7 +39,7 @@ let W, H; // canvasサイズ
 // =============== ゲームオブジェクト ===============
 let ball, leftPaddle, rightPaddle, trail;
 let scoreLeft = 0, scoreRight = 0;
-let nextObstacleHitsTarget = 15; // 次にお邪魔AIが出現する目標ヒット数
+let nextObstacleHitsTarget = 8; // 次にお邪魔AIが出現する目標ヒット数
 
 // =============== 入力 ===============
 // キーボード入力時の画面スクロールを防ぎ、ゲームに集中させる（フォーカス改善）
@@ -95,7 +95,9 @@ function makeBall(serveDir = 1) {
         vy: Math.sin(angle) * spd,
         baseSpeed: spd,
         hitsCount: 0,
-        isPowerShot: false
+        isPowerShot: false,
+        isCurveBall: false,
+        curvePhase: 0
     };
 }
 
@@ -216,8 +218,10 @@ function initGame() {
     rightPaddle = makePaddle('right');
     trail = [];
     powerItem = null; // アイテムリセット
+    nextItemType = 'speed'; // 最初はスピード
+    lastPowerItemSpawnHits = 0;
     obstacle = null;
-    nextObstacleHitsTarget = 15; // 初期化
+    nextObstacleHitsTarget = 8; // 初期化
 
     paused = false;
     gameRunning = true;
@@ -244,6 +248,7 @@ function stopGame() {
 function startRound(serveDir) {
     ball = null;
     trail = [];
+    powerItem = null;
     let count = 3;
 
     // 毎回新しく要素を作ることで確実にアニメーションをリセット・独立させる
@@ -297,6 +302,8 @@ function loop(timestamp) {
 // 更新
 // -----------------------------------------------
 let powerItem = null;
+let nextItemType = 'speed';
+let lastPowerItemSpawnHits = 0;
 let obstacle = null;
 
 function update(dt) {
@@ -317,8 +324,10 @@ function update(dt) {
 
     // --- パワーアイテム出現ロジック（中央30％で浮遊） ---
     // 4ヒットごとに確実に出現
-    if (!powerItem && ball.hitsCount > 0 && ball.hitsCount % 4 === 0) {
+    if (!powerItem && ball.hitsCount > 0 && ball.hitsCount % 4 === 0 && ball.hitsCount !== lastPowerItemSpawnHits) {
+        lastPowerItemSpawnHits = ball.hitsCount;
         powerItem = {
+            type: nextItemType,
             x: W / 2,
             y: H / 2,
             baseX: W / 2,
@@ -328,14 +337,24 @@ function update(dt) {
             pulse: 0,
             time: 0
         };
+        // 次回のアイテムを切り替え
+        nextItemType = nextItemType === 'speed' ? 'curve' : 'speed';
     }
 
     // --- ボール移動 ---
+    // カーブ球の処理
+    if (ball.isCurveBall) {
+        ball.curvePhase += 8.0 * dt;
+        // Y軸の速度にサイン波の変化を加える（ぐにゃぐにゃ曲がる感じ）
+        let curveEffect = Math.sin(ball.curvePhase) * ball.baseSpeed * 0.5;
+        ball.vy += curveEffect * dt * 60; // dtの係数を調整
+    }
+
     ball.x += ball.vx * dt;
     ball.y += ball.vy * dt;
 
     // 軌跡
-    trail.push({ x: ball.x, y: ball.y, alpha: 1.0, isPowerShot: ball.isPowerShot });
+    trail.push({ x: ball.x, y: ball.y, alpha: 1.0, isPowerShot: ball.isPowerShot, isCurveBall: ball.isCurveBall });
     if (trail.length > TRAIL_LEN) trail.shift();
 
     // 上下壁バウンド
@@ -412,7 +431,7 @@ function update(dt) {
                 if (obstacle.hp <= 0) {
                     if (window.playGlassBreakSE) window.playGlassBreakSE(); // 破壊音
                     obstacle = null; // 破壊
-                    nextObstacleHitsTarget = ball.hitsCount + 15; // 再出現のための目標ヒット数更新
+                    nextObstacleHitsTarget = ball.hitsCount + 8; // 再出現のための目標ヒット数更新
                 } else {
                     if (window.playGlassHitSE) window.playGlassHitSE(); // 当たったガラス音
                     obstacle.flash = 1.0;
@@ -426,7 +445,7 @@ function update(dt) {
     checkPaddleHit(rightPaddle);
 
     // アイテム状態更新・衝突判定
-    if (powerItem && powerItem.active) {
+    if (powerItem) {
         if (powerItem.time === undefined) powerItem.time = 0;
         powerItem.time += dt;
         powerItem.pulse += 3.0 * dt; // スケール・明滅用
@@ -440,11 +459,16 @@ function update(dt) {
         const dx = ball.x - powerItem.x;
         const dy = ball.y - powerItem.y;
         if (Math.hypot(dx, dy) < BALL_R + powerItem.r) {
-            powerItem.active = false;
-            ball.isPowerShot = true;
-            ball.vx *= 1.6;
-            ball.vy *= 1.6;
-            if (window.playScoreSE) playScoreSE(); // 取得音
+            if (powerItem.type === 'speed') {
+                ball.isPowerShot = true;
+                ball.vx *= 1.6;
+                ball.vy *= 1.6;
+            } else if (powerItem.type === 'curve') {
+                ball.isCurveBall = true;
+                ball.curvePhase = 0;
+            }
+            powerItem = null;
+            if (window.playHealSE) window.playHealSE(); // 癒やしSEを再生！
         }
     }
 
@@ -574,8 +598,9 @@ function checkPaddleHit(p) {
     }
 
     if (hit) {
-        // パワーショット解除（受けた側は元の速度ベースになる）
+        // パワーショット・カーブ解除（受けた側は元の速度ベースになる）
         ball.isPowerShot = false;
+        ball.isCurveBall = false;
 
         // 反射ベクトル計算: V' = V - 2(V・N)N
         const dot = ball.vx * normalX + ball.vy * normalY;
@@ -588,8 +613,8 @@ function checkPaddleHit(p) {
 
         // 速度計算と再定義
         ball.hitsCount++;
-        // 加速感をアップ（回数×15%加算、最大3.0倍まで）
-        const accel = Math.min(1 + ball.hitsCount * 0.15, 3.0);
+        // ★修正: 加速感をなだらかにアップ（回数×8%加算、最大3.0倍まで）
+        const accel = Math.min(1 + ball.hitsCount * 0.08, 3.0);
         let spd = Math.hypot(ball.vx, ball.vy);
         if (spd < 0.1) spd = 1; // 0割回避
         const newSpd = ball.baseSpeed * accel;
@@ -698,7 +723,7 @@ function render() {
     drawCenterLine();
 
     // アイテム描画
-    if (powerItem && powerItem.active) {
+    if (powerItem) {
         drawPowerItem();
     }
 
@@ -742,6 +767,8 @@ function drawTrail() {
 
         if (trail[i].isPowerShot) {
             ctx.fillStyle = '#ffe600'; // パワーショット時の黄色い軌跡
+        } else if (trail[i].isCurveBall) {
+            ctx.fillStyle = '#b388ff'; // カーブボール時の紫の軌跡
         } else {
             ctx.fillStyle = '#00f5ff';
         }
@@ -816,6 +843,14 @@ function drawBall() {
         grad.addColorStop(0, '#ffffff');
         grad.addColorStop(0.5, '#ffffbb');
         grad.addColorStop(1, '#ffbb00');
+    } else if (ball.isCurveBall) {
+        grad = ctx.createRadialGradient(
+            ball.x - BALL_R * 0.3, ball.y - BALL_R * 0.3, BALL_R * 0.1,
+            ball.x, ball.y, BALL_R
+        );
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.5, '#d8b4e2');
+        grad.addColorStop(1, '#8a2be2');
     } else {
         grad = ctx.createRadialGradient(
             ball.x - BALL_R * 0.3, ball.y - BALL_R * 0.3, BALL_R * 0.1,
@@ -835,14 +870,55 @@ function drawPowerItem() {
     ctx.save();
     // 鼓動を大きく
     const animScale = 1 + Math.sin(powerItem.pulse) * 0.25;
-    ctx.shadowColor = '#ffe600';
-    ctx.shadowBlur = 30;
-    ctx.globalAlpha = 0.8 + Math.sin(powerItem.pulse * 2) * 0.2; // 明滅
 
-    ctx.beginPath();
-    ctx.arc(powerItem.x, powerItem.y, powerItem.r * animScale, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffe600';
-    ctx.fill();
+    if (powerItem.type === 'speed') {
+        // ★修正：時間経過（pulse）で色相環を回し、虹色の発光を作る
+        const hue = (powerItem.pulse * 50) % 360;
+        const color = `hsl(${hue}, 100%, 50%)`;
+
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 30;
+        ctx.globalAlpha = 0.8 + Math.sin(powerItem.pulse * 2) * 0.2; // 明滅
+
+        ctx.beginPath();
+        ctx.arc(powerItem.x, powerItem.y, powerItem.r * animScale, 0, Math.PI * 2);
+
+        // 虹色グラデーション
+        const grad = ctx.createRadialGradient(powerItem.x, powerItem.y, 0, powerItem.x, powerItem.y, powerItem.r * animScale);
+        grad.addColorStop(0, `hsl(${hue}, 100%, 75%)`); // 中心は白っぽく
+        grad.addColorStop(1, color);
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+    } else if (powerItem.type === 'curve') {
+        // カーブアイテム（青〜紫系の発光色）
+        ctx.shadowColor = '#00e5ff'; // エメラルド・シアン系ベース
+        ctx.shadowBlur = 25;
+        ctx.globalAlpha = 0.8 + Math.sin(powerItem.pulse * 1.5) * 0.2;
+
+        // 背景円
+        ctx.beginPath();
+        ctx.arc(powerItem.x, powerItem.y, powerItem.r * animScale, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(106, 13, 173, 0.6)'; // 深い紫をベースに
+        ctx.fill();
+
+        // 渦巻き（カーブ感）のような意匠を描画
+        ctx.beginPath();
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 3;
+        const spiralRot = powerItem.pulse * 2.0;
+
+        for (let i = 0; i < Math.PI * 4; i += 0.2) {
+            const rad = i * 2.5 * animScale;
+            // 渦を巻く
+            const sX = powerItem.x + Math.cos(i + spiralRot) * rad;
+            const sY = powerItem.y + Math.sin(i + spiralRot) * rad;
+            if (i === 0) ctx.moveTo(sX, sY);
+            else ctx.lineTo(sX, sY);
+        }
+        ctx.stroke();
+    }
+
     ctx.restore();
 }
 
@@ -979,7 +1055,7 @@ window.addEventListener('resize', () => {
         ball.x *= ratio;
         ball.y *= ratio;
     }
-    if (powerItem && powerItem.active) {
+    if (powerItem) {
         powerItem.baseX = W / 2;
         powerItem.baseY = H / 2;
     }

@@ -101,6 +101,40 @@ function playScoreSE() {
     });
 }
 
+// アイテム取得音（メロディアスで癒やされる音色・カーブ球用）
+function playHealSE() {
+    if (!actx) return;
+    const t = actx.currentTime;
+
+    // ペンタトニックスケール風の広がる和音（C, D, E, G, A）
+    const freqs = [523.25, 587.33, 659.25, 783.99, 880.00];
+    freqs.forEach((freq, i) => {
+        const osc = actx.createOscillator();
+        const gain = actx.createGain();
+
+        // 柔らかく暖かい音色（サイン波）
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t);
+
+        const startTime = t + i * 0.1; // ゆったりと音が重なる
+        gain.gain.setValueAtTime(0, startTime);
+        gain.gain.linearRampToValueAtTime(0.2, startTime + 0.1);
+        // 長めの減衰で余韻（癒やし）を残す
+        gain.gain.exponentialRampToValueAtTime(0.001, startTime + 1.2);
+
+        // 少しパンニングして広がりを
+        const panner = actx.createStereoPanner();
+        panner.pan.value = (Math.random() - 0.5) * 0.8;
+
+        osc.connect(gain);
+        gain.connect(panner);
+        panner.connect(masterGain);
+
+        osc.start(startTime);
+        osc.stop(startTime + 1.5);
+    });
+}
+
 // ゲームオーバー/勝利音
 function playWinSE() {
     if (!actx) return;
@@ -340,6 +374,8 @@ window.startPadBGM = startPadBGM;
 window.stopPadBGM = stopPadBGM;
 window.playHitSE = playHitSE;
 window.playWallSE = playWallSE;
+window.playScoreSE = playScoreSE; // 既存のScoreSEをエクスポート
+window.playHealSE = playHealSE;   // 新しい癒やしSE
 window.playWinSE = playWinSE;
 window.playGlassHitSE = playGlassHitSE;
 window.playGlassBreakSE = playGlassBreakSE;
